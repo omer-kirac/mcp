@@ -1,106 +1,112 @@
-"""Main entry point for the MCP AI Agent."""
-import asyncio
-from rich.console import Console
-from rich.prompt import Prompt
-from rich.panel import Panel
-from rich.markdown import Markdown
+"""FastAPI application for MCP AI Agent."""
+from fastapi import FastAPI, HTTPException
+from pydantic import BaseModel
+from typing import Optional
+from contextlib import asynccontextmanager
+import uvicorn
+import signal
+import sys
 
 from agent import MCPAgent
 from config import Config
 
+# Global agent instance
+agent = None
 
-console = Console()
-
-
-def print_welcome():
-    """Print welcome message."""
-    welcome_text = """
-# 🤖 MCP AI Agent
-
-Hoş geldiniz! Bu AI agent, Model Context Protocol (MCP) ile entegre edilmiştir.
-
-**Komutlar:**
-- Herhangi bir soru sorun veya görev verin
-- `clear` - Konuşma geçmişini temizle
-- `tools` - Mevcut araçları listele
-- `help` - Yardım menüsü
-- `exit` veya `quit` - Çıkış
-
-Agent şu anda bağlı MCP sunucularındaki araçları kullanabilir.
-    """
-    console.print(Panel(Markdown(welcome_text), border_style="cyan"))
-
-
-async def main():
-    """Main application loop."""
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Lifespan context manager for FastAPI app."""
+    global agent
+    
+    # Startup
     try:
-        # Validate configuration
         Config.validate()
-    except ValueError as e:
-        console.print(f"[bold red]❌ Configuration Error:[/bold red] {e}")
-        console.print("\n[yellow]Lütfen .env dosyanızı oluşturun ve ANTHROPIC_API_KEY değişkenini ayarlayın.[/yellow]")
-        console.print("[yellow]Örnek için .env.example dosyasına bakın.[/yellow]")
-        return
-    
-    # Initialize agent
-    agent = MCPAgent(Config)
-    
-    try:
+        agent = MCPAgent(Config)
         await agent.initialize()
-        print_welcome()
-        
-        # Main interaction loop
-        while True:
-            try:
-                user_input = Prompt.ask("\n[bold cyan]Siz[/bold cyan]")
-                
-                if not user_input.strip():
-                    continue
-                
-                # Handle commands
-                if user_input.lower() in ["exit", "quit", "çıkış"]:
-                    console.print("[yellow]Görüşmek üzere! 👋[/yellow]")
-                    break
-                    
-                elif user_input.lower() == "clear":
-                    agent.clear_history()
-                    continue
-                    
-                elif user_input.lower() == "tools":
-                    if agent.available_tools:
-                        console.print("\n[bold]Mevcut Araçlar:[/bold]")
-                        for tool in agent.available_tools:
-                            console.print(f"  • [cyan]{tool['server']}.{tool['name']}[/cyan]: {tool['description']}")
-                    else:
-                        console.print("[yellow]Henüz bağlı MCP sunucusu yok.[/yellow]")
-                    continue
-                    
-                elif user_input.lower() == "help":
-                    print_welcome()
-                    continue
-                
-                # Get agent response
-                console.print("\n[bold green]Agent[/bold green]:")
-                response = await agent.chat(user_input)
-                
-                # Display response
-                console.print(Panel(Markdown(response), border_style="green"))
-                
-            except KeyboardInterrupt:
-                console.print("\n[yellow]Kesintiye uğradı. Çıkmak için 'exit' yazın.[/yellow]")
-                continue
-                
-            except Exception as e:
-                console.print(f"[bold red]Hata:[/bold red] {e}")
-                
-    finally:
-        await agent.shutdown()
+        print("✓ Agent initialized successfully")
+    except ValueError as e:
+        print(f"Configuration Error: {e}")
+        sys.exit(1)
+    except Exception as e:
+        print(f"Startup Error: {e}")
+        sys.exit(1)
+    
+    yield
+    
+    # Shutdown
+    try:
+        if agent:
+            await agent.shutdown()
+            print("✓ Agent shutdown successfully")
+    except Exception as e:
+        print(f"Shutdown Error: {e}")
 
+# Initialize FastAPI app with lifespan
+app = FastAPI(
+    title="MCP AI Agent API",
+    description="API for interacting with MCP AI Agent",
+    version="1.0.0",
+    lifespan=lifespan
+)
+
+class ChatRequest(BaseModel):
+    """Chat request model."""
+    message: str
+    clear_history: Optional[bool] = False
+
+class ChatResponse(BaseModel):
+    """Chat response model."""
+    response: str
+
+@app.post("/chat", response_model=ChatResponse)
+async def chat(request: ChatRequest):
+    """
+    Chat with the AI agent.
+    
+    Args:
+        request: ChatRequest object containing the message and clear_history flag
+        
+    Returns:
+        ChatResponse object containing the agent's response
+    """
+    try:
+        if request.clear_history:
+            agent.clear_history()
+            
+        response = await agent.chat(request.message)
+        return ChatResponse(response=response)
+        
+    except Exception as e:
+        import traceback
+        error_detail = f"Error: {str(e)}\n\nTraceback:\n{traceback.format_exc()}"
+        print(f"Chat endpoint error: {error_detail}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/tools")
+async def list_tools():
+    """
+    List available MCP tools.
+    
+    Returns:
+        List of available tools
+    """
+    return {"tools": agent.available_tools}
+
+@app.get("/health")
+async def health_check():
+    """Health check endpoint."""
+    return {"status": "healthy", "agent_ready": agent is not None}
+
+def signal_handler(sig, frame):
+    """Handle Ctrl+C gracefully."""
+    print("\n\nShutting down gracefully...")
+    sys.exit(0)
 
 if __name__ == "__main__":
+    signal.signal(signal.SIGINT, signal_handler)
     try:
-        asyncio.run(main())
+        uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
     except KeyboardInterrupt:
-        console.print("\n[yellow]Program sonlandırıldı.[/yellow]")
+        print("\nServer stopped.")
 
 

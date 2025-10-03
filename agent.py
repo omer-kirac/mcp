@@ -8,6 +8,7 @@ from rich.markdown import Markdown
 
 from config import Config
 from mcp_client import MCPClient
+from logger import PromptLogger
 
 
 class MCPAgent:
@@ -26,10 +27,14 @@ class MCPAgent:
         self.console = Console()
         self.conversation_history: List[Dict[str, Any]] = []
         self.available_tools: List[Dict[str, Any]] = []
+        self.logger = PromptLogger()  # Initialize prompt logger
         
     async def initialize(self):
         """Initialize the agent by connecting to MCP servers."""
         self.console.print("[bold cyan]🤖 Initializing MCP AI Agent...[/bold cyan]")
+        
+        # Show log location
+        self.console.print(f"[cyan]📝 Log dosyaları: {self.logger.get_log_location()}[/cyan]")
         
         # Connect to MCP servers
         await self.mcp_client.connect()
@@ -77,15 +82,20 @@ class MCPAgent:
         # Parse server and tool name
         parts = tool_name.split('_', 1)
         if len(parts) != 2:
-            return {"error": f"Invalid tool name format: {tool_name}"}
+            error_result = {"error": f"Invalid tool name format: {tool_name}"}
+            self.logger.log_tool_execution(tool_name, tool_input, error_result, success=False)
+            return error_result
             
         server_name, actual_tool_name = parts
         
         try:
             result = await self.mcp_client.call_tool(server_name, actual_tool_name, tool_input)
+            self.logger.log_tool_execution(tool_name, tool_input, result, success=True)
             return result
         except Exception as e:
-            return {"error": str(e)}
+            error_result = {"error": str(e)}
+            self.logger.log_tool_execution(tool_name, tool_input, error_result, success=False)
+            return error_result
     
     async def chat(self, user_message: str) -> str:
         """
@@ -132,8 +142,29 @@ Always explain what you're doing and provide clear, helpful responses."""
             if anthropic_tools:
                 api_params["tools"] = anthropic_tools
             
+            # Log the prompt being sent
+            self.logger.log_prompt(
+                system_message=system_message,
+                messages=self.conversation_history,
+                model=self.config.MODEL_NAME,
+                temperature=self.config.TEMPERATURE,
+                max_tokens=self.config.MAX_TOKENS,
+                tools=anthropic_tools
+            )
+            
             # Get response from Claude
             response = self.client.messages.create(**api_params)
+            
+            # Log the response received
+            usage_info = {
+                "input_tokens": response.usage.input_tokens,
+                "output_tokens": response.usage.output_tokens
+            }
+            self.logger.log_response(
+                response=response,
+                stop_reason=response.stop_reason,
+                usage=usage_info
+            )
             
             # Check if we need to process tool calls
             if response.stop_reason == "tool_use":

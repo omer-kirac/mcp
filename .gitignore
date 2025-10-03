@@ -39,3 +39,11 @@ ENV/
 # OS
 .DS_Store
 Thumbs.db
+
+# Logs
+logs/
+*.log
+
+# Node modules
+node_modules/
+frontend/node_modules/

@@ -6,7 +6,10 @@ from pathlib import Path
 def create_env_file():
     """Create a .env file with example configuration."""
     env_content = """# Anthropic API Key
-ANTHROPIC_API_KEY=your_api_key_here
+ANTHROPIC_API_KEY=sk-ant-api03-Gg4aCA3owakTlcPdp2F
+Va9vfaPXelnaIVzzcEIgY9s24bmVx97FT
+mkm4ueQVGtJWDgBYLcvq3ofC-7fod
+nK2Hg-l3zPYwAA 
 
 # Agent Settings
 MODEL_NAME=claude-3-5-sonnet-20241022
